@@ -3,10 +3,11 @@
 #include <string.h>
 #include "semantics.h"
 #include "symbol_table.h"
+#include "ast.h"
 
 static int cur_scope = 0;
 static int declared = 0;
-extern int yylineno;
+static int function_declared = 0;
 
 void initSymbolTable() {
     table = (StorageNode**)malloc(SIZE * sizeof(StorageNode*));
@@ -37,37 +38,45 @@ void insert(const char* name, int len, int type, int line_no) {
     }
 
     if (node == NULL) {
-        if(declared == 1) {
+        if (declared) {
             node = (StorageNode*)malloc(sizeof(StorageNode));
-            strncpy(node -> storage_name, name, len);
 
+            strncpy(node -> storage_name, name, len);
             node -> storage_size = len;
             node -> storage_type = type;
             node -> scope = cur_scope;
-            node -> lines = (Referenced*) malloc(sizeof(Referenced));
+            node -> lines = (Referenced*)malloc(sizeof(Referenced));
             node -> lines -> line_no = line_no;
             node -> lines -> next = NULL;
-
+            node -> array_size = NULL;
+            node -> indices = NULL;
+            node -> index_count = 0;
+            node -> cur_idx = 0;
+            
             node -> next = table[hash_val];
             table[hash_val] = node; 
         } else {
-            node = (StorageNode*) malloc(sizeof(StorageNode));
-            strncpy(node -> storage_name, name, len);
+            node = (StorageNode*)malloc(sizeof(StorageNode));
 
+            strncpy(node -> storage_name, name, len);
             node -> storage_size = len;
             node -> storage_type = type;
             node -> scope = cur_scope;
-            node -> lines = (Referenced*) malloc(sizeof(Referenced));
+            node -> lines = (Referenced*)malloc(sizeof(Referenced));
             node -> lines -> line_no = line_no;
             node -> lines -> next = NULL;
-
+            node -> array_size = NULL;
+            node -> indices = NULL;
+            node -> index_count = 0;
+            node -> cur_idx = 0;
+            
             node -> next = table[hash_val];
             table[hash_val] = node;
 
-            pushToQueue(node -> storage_name, ARG_CHECK);
+            pushToQueue(node, node -> storage_name, ARG_CHECK);
         }
     } else {
-        if (declared == 0) {
+        if (!declared) {
             Referenced* lines = node -> lines;
 
             while (lines -> next != NULL) {
@@ -77,31 +86,45 @@ void insert(const char* name, int len, int type, int line_no) {
             lines -> next = (Referenced*)malloc(sizeof(Referenced));
             lines -> next -> line_no = line_no;
             lines -> next -> next = NULL;
-        } else{
+        } else {
             if (node -> scope == cur_scope) {
-                fprintf(stderr, "Redefinition of %s at line %d.\n", name, yylineno);
+                fprintf(stderr, "Redefinition of %s at line %d.\n", name, node -> lines -> line_no);
                 exit(1);
-            } else{
-                node = (StorageNode*) malloc(sizeof(StorageNode));
-                strncpy(node -> storage_name, name, len);
+            } else if (function_declared) {
+                Referenced* lines = node -> lines;
 
+                while (lines -> next != NULL) {
+                    lines = lines -> next;
+                }
+
+                lines -> next = (Referenced*)malloc(sizeof(Referenced));
+                lines -> next -> line_no = line_no;
+                lines -> next -> next = NULL;
+            } else {
+                node = (StorageNode*)malloc(sizeof(StorageNode));
+
+                strncpy(node -> storage_name, name, len);
                 node -> storage_size = len;
                 node -> storage_type = type;
                 node -> scope = cur_scope;
-                node -> lines = (Referenced*) malloc(sizeof(Referenced));
+                node -> lines = (Referenced*)malloc(sizeof(Referenced));
                 node -> lines -> line_no = line_no;
                 node -> lines -> next = NULL;
-
+                node -> array_size = NULL;
+                node -> indices = NULL;
+                node -> index_count = 0;
+                node -> cur_idx = 0;
+                
                 node -> next = table[hash_val];
                 table[hash_val] = node;
-            }	
-        }		
+            }
+        }
     }
 }
 
 StorageNode* lookup(const char* name) {
     unsigned int hash_val = hash(name);
-    StorageNode *node = table[hash_val];
+    StorageNode* node = table[hash_val];
 
     while ((node != NULL) && (strcmp(name, node -> storage_name) != 0)) {
         node = node -> next;
@@ -110,7 +133,7 @@ StorageNode* lookup(const char* name) {
     return node;
 }
 
-void setType(const char* name, int storage_type, int inferred_type) {
+void setDataType(const char* name, int storage_type, int inferred_type) {
     StorageNode* node = lookup(name);
 
     node -> storage_type = storage_type;
@@ -120,59 +143,29 @@ void setType(const char* name, int storage_type, int inferred_type) {
     }
 }
 
-int getType(const char* name) {
+int getDataType(const char* name) {
     StorageNode* node = lookup(name);
 
-    if (node -> storage_type == INT_TYPE || node -> storage_type == REAL_TYPE || node -> storage_type == CHAR_TYPE || node -> storage_type == STRING_TYPE || node -> storage_type == BOOL_TYPE) {
-        return node -> storage_type;
+    if (node != NULL) {
+        if (node -> storage_type == INT_TYPE || node -> storage_type == REAL_TYPE || node -> storage_type == CHAR_TYPE || node -> storage_type == STRING_TYPE || node -> storage_type == BOOL_TYPE) {
+            return node -> storage_type;
+        } else {
+            return node -> inferred_type;
+        }
     } else {
-        return node -> inferred_type;
+        return UNDEF;
     }
 }
 
-Argument defArg(int arg_type, const char* arg_name, int pass){
+Argument defArg(int arg_type, int storage_type, const char* arg_name, int pass) {
     Argument arg;
 
     arg.arg_type = arg_type;
+    arg.storage_type = storage_type;
     strcpy(arg.arg_name, arg_name);
     arg.pass = pass;
 
     return arg;
-}
-
-int funcDeclaration(const char* name, int ret_type, int arg_count, Argument *args) {
-    StorageNode* node = lookup(name);
-
-    if (node -> storage_type != UNDEF) {
-        node -> storage_type = FUNCTION_TYPE;
-        node -> inferred_type = ret_type;
-        node -> arg_count = arg_count;
-        node -> args = args;
-
-        return 0;
-    } else{
-        fprintf(stderr, "Redefinition of %s at line %d.\n", name, yylineno);
-        exit(1);
-    }
-}
-
-int funcArgCheck(const char* name, int arg_count, Argument* args) {
-    int type_1, type_2;
-    StorageNode* node = lookup(name);
-
-    if(node -> arg_count != arg_count){
-        fprintf(stderr, "Too few arguments to function %s at line %d.\n", name, yylineno);
-        exit(1);
-    }
-    
-    for (int i = 0; i < arg_count; i++) {
-        type_1 = node -> args[i].arg_type;
-        type_2 = args[i].arg_type;
-
-        getResultType(type_1, type_2, NONE);
-    }
-
-    return 0;
 }
 
 void hideScope() {
@@ -197,67 +190,7 @@ void incrScope() {
     cur_scope++;
 }
 
-void pushToQueue(char* name, int type) {
-    RevisitQueue* q;
-
-    if(queue == NULL){
-        q = (RevisitQueue*)malloc(sizeof(RevisitQueue));
-
-        q -> storage_name = name;
-        q -> revisit_type = type;
-        q -> next = NULL;
-
-        queue = q;
-    } else {
-        q = queue;
-
-        while (q -> next != NULL) {
-            q = q -> next;
-        }
-
-        q -> next = (RevisitQueue*) malloc(sizeof(RevisitQueue));
-
-        q -> next -> storage_name = name;
-        q -> next -> revisit_type = type;
-        q -> next -> next = NULL;
-    }		
-}
-
-int revisit(const char* name) {
-    RevisitQueue* q;
-
-    if (strcmp(queue -> storage_name, name) == 0) {
-        switch(queue -> revisit_type) {
-            case ARG_CHECK:
-                break;
-        }
-
-        queue = queue -> next;
-
-        return 0;
-    }
-
-    q = queue;
-
-    while (strcmp(q -> next -> storage_name, name) != 0) {
-        q = q -> next;
-    }
-
-    if (q == NULL) {
-        return 1;
-    }
-
-    switch (q -> next -> revisit_type) {
-        case ARG_CHECK:
-            break;
-    }
-
-    q -> next = q -> next -> next;
-
-    return 0;
-}
-
-void printSymbolTable(FILE* of){
+void printSymbolTable(FILE* of) {
     fprintf(of, "------------ -------------- ------ ------------\n");
     fprintf(of, "Name         Type           Scope  Line Numbers\n");
     fprintf(of, "------------ -------------- ------ ------------\n");
@@ -286,6 +219,9 @@ void printSymbolTable(FILE* of){
                     case BOOL_TYPE:
                         fprintf(of, "%-15s", "bool");
                         break;
+                    case VOID_TYPE:
+                        fprintf(of, "%-15s", "void");
+                        break;
                     case ARRAY_TYPE:
                         fprintf(of, "array of ");
 
@@ -304,6 +240,9 @@ void printSymbolTable(FILE* of){
                                 break;
                             case BOOL_TYPE:
                                 fprintf(of, "%-6s", "bool");
+                                break;
+                            case VOID_TYPE:
+                                fprintf(of, "%-6s", "void");
                                 break;
                             default:
                                 fprintf(of, "%-13s", "undef");
@@ -337,7 +276,7 @@ void printSymbolTable(FILE* of){
 
                         break;
                     case FUNCTION_TYPE:
-                        fprintf(of, "%-6s", "function returns ");
+                        fprintf(of, "%-6s", "func ret ");
 
                         switch (node -> inferred_type) {
                             case INT_TYPE:
@@ -354,6 +293,9 @@ void printSymbolTable(FILE* of){
                                 break;
                             case BOOL_TYPE:
                                 fprintf(of, "%-6s", "bool");
+                                break;
+                            case VOID_TYPE:
+                                fprintf(of, "%-6s", "void");
                                 break;
                             default:
                                 fprintf(of, "%-4s", "undef");
@@ -377,24 +319,5 @@ void printSymbolTable(FILE* of){
                 node = node -> next;
             }
         }
-    }
-}
-
-void printRevisitQueue(FILE* of) {
-    RevisitQueue* q = queue;
-    
-    fprintf(of, "------------ -------------\n");
-    fprintf(of, "Identifier   Revisit Type\n");
-    fprintf(of, "------------ -------------\n");
-
-    while (q != NULL) {
-        fprintf(of, "%-13s", q -> storage_name);
-
-        if (q -> revisit_type == ARG_CHECK) {
-            fprintf(of,"%s","Parameter Check");
-        }
-
-        fprintf(of, "\n");
-        q = q -> next;	
     }
 }

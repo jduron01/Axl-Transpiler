@@ -1,7 +1,10 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include "code_generation.h"
+#include "ast.h"
 
+static int contains_revisit = 0;
 extern int yylineno;
 
 ASTNode* newASTNode(NodeType type, ASTNode* left, ASTNode* right) {
@@ -146,7 +149,7 @@ ASTNode* newASTAssignNode(StorageNode* entry, int ref, ASTNode* assign_val) {
     return (ASTNode*)node;
 }
 
-ASTNode* newASTArithAssignNode(StorageNode* entry, int ref, ASTNode* assign_val, ArithAssign op) {
+ASTNode* newASTArithAssignNode(StorageNode* entry, int ref, ASTNode* assign_val, ASTNode* left, ASTNode* right, ArithAssign op) {
     ASTArithAssign* node = (ASTArithAssign*)malloc(sizeof(ASTArithAssign));
 
     node -> type = ARITH_ASSIGN_NODE;
@@ -154,6 +157,7 @@ ASTNode* newASTArithAssignNode(StorageNode* entry, int ref, ASTNode* assign_val,
     node -> ref = ref;
     node -> assign_val = assign_val;
     node -> op = op;
+    node -> data_type = getResultType(getExpressionType(left), getExpressionType(right), ARITH_ASSIGN_OP);
 
     return (ASTNode*)node;
 }
@@ -217,6 +221,7 @@ ASTNode* newASTArithNode(enum ArithOpEnum op, ASTNode* left, ASTNode* right) {
     node -> op = op;
     node -> left = left;
     node -> right = right;
+    node -> data_type = getResultType(getExpressionType(left), getExpressionType(right), ARITH_OP);
 
     return (ASTNode*)node;
 }
@@ -229,6 +234,12 @@ ASTNode* newASTBoolNode(enum BoolOpEnum op, ASTNode* left, ASTNode* right) {
     node -> left = left;
     node -> right = right;
 
+    if (op != OP_NOT) {
+        node -> data_type = getResultType(getExpressionType(left), getExpressionType(right), BOOL_OP);
+    } else {
+        node -> data_type = getResultType(getExpressionType(left), UNDEF, NOT_OP);
+    }
+
     return (ASTNode*)node;
 }
 
@@ -239,6 +250,7 @@ ASTNode* newASTRelNode(enum RelOpEnum op, ASTNode* left, ASTNode* right) {
     node -> op = op;
     node -> left = left;
     node -> right = right;
+    node -> data_type = getResultType(getExpressionType(left), getExpressionType(right), REL_OP);
 
     return (ASTNode*)node;
 }
@@ -250,6 +262,7 @@ ASTNode* newASTEquNode(enum EquOpEnum op, ASTNode* left, ASTNode* right) {
     node -> op = op;
     node -> left = left;
     node -> right = right;
+    node -> data_type = getResultType(getExpressionType(left), getExpressionType(right), EQU_OP);
 
     return (ASTNode*)node;
 }
@@ -335,6 +348,97 @@ ASTNode* newASTReturnNode(int ret_type, ASTNode* ret_val) {
     node -> ret_val = ret_val;
 
     return (ASTNode*)node;
+}
+
+ASTNode* newASTParenNode(ASTNode* node) {
+    ASTParen* paren_node = (ASTParen*)malloc(sizeof(ASTParen));
+
+    paren_node -> type = PAREN_NODE;
+    paren_node -> node = node;
+
+    return (ASTNode*)paren_node;
+}
+
+int getExpressionType(ASTNode* node) {
+    switch (node -> type) {
+        case ARITH_NODE: {
+            ASTArith* temp_arith = (ASTArith*)node;
+
+            temp_arith -> data_type = getResultType(getExpressionType(temp_arith -> left), getExpressionType(temp_arith -> right), ARITH_OP);
+
+            return temp_arith -> data_type;
+        }
+
+        case INCR_NODE: {
+            ASTIncr* temp_incr = (ASTIncr*)node;
+            return temp_incr -> entry -> storage_type;
+        }
+
+        case BOOL_NODE: {
+            ASTBool* temp_bool = (ASTBool*)node;
+
+            if (temp_bool -> op != NOT_OP) {
+                temp_bool -> data_type = getResultType(getExpressionType(temp_bool -> left), getExpressionType(temp_bool -> right), BOOL_OP);
+            } else {
+                temp_bool -> data_type = getResultType(getExpressionType(temp_bool -> left), UNDEF, NOT_OP);
+            }
+
+            return temp_bool -> data_type;
+        }
+
+        case REL_NODE: {
+            ASTRel* temp_rel = (ASTRel*)node;
+
+            temp_rel -> data_type = getResultType(getExpressionType(temp_rel -> left), getExpressionType(temp_rel -> right), REL_OP);
+
+            return temp_rel -> data_type;
+        }
+
+        case EQU_NODE: {
+            ASTEqu* temp_equ = (ASTEqu*)node;
+
+            temp_equ -> data_type = getResultType(getExpressionType(temp_equ -> left), getExpressionType(temp_equ -> right), EQU_OP);
+
+            return temp_equ -> data_type;
+        }
+
+        case REF_NODE: {
+            ASTRef* temp_ref = (ASTRef*)node;
+
+            if (temp_ref -> entry -> storage_type == INT_TYPE || temp_ref -> entry -> storage_type == REAL_TYPE || temp_ref -> entry -> storage_type == CHAR_TYPE || temp_ref -> entry -> storage_type == STRING_TYPE || temp_ref -> entry -> storage_type == BOOL_TYPE) {
+                return temp_ref -> entry -> storage_type;
+            } else if (temp_ref -> entry -> storage_type == ARRAY_TYPE) {
+                return temp_ref -> entry -> inferred_type;
+            } else if (temp_ref -> entry -> storage_type == POINTER_TYPE) {
+                return INT_TYPE;
+            }
+        }
+
+        case CONST_NODE: {
+            ASTConst* temp_const = (ASTConst*)node;
+            return temp_const -> const_type;
+        }
+
+        case FUNC_CALL: {
+            ASTFuncCall* temp_func_call = (ASTFuncCall*)node;
+
+            if (temp_func_call -> entry -> storage_type == UNDEF && temp_func_call -> entry -> inferred_type == UNDEF) {
+                contains_revisit = 1;
+                return INT_TYPE;
+            }
+
+            return temp_func_call -> entry -> inferred_type;
+        }
+
+        case PAREN_NODE: {
+            ASTParen* temp_paren = (ASTParen*)node;
+            return getExpressionType(temp_paren -> node);
+        }
+
+        default:
+            fprintf(stderr, "Invalid data type.\n");
+            exit(1);
+    }
 }
 
 void traverseAST(ASTNode* node) {
@@ -461,8 +565,10 @@ void traverseAST(ASTNode* node) {
 
             printASTNode(node);
 
+            printf("Condition:\n");
             traverseAST(temp_while -> condition);
 
+            printf("While branch:\n");
             traverseAST(temp_while -> while_branch);
 
             break;
@@ -614,7 +720,7 @@ void printASTNode(ASTNode* node) {
             ASTConst* temp_const = (ASTConst*)node;
             printf("Constant Node of const-type %d with value ", temp_const -> const_type);
 
-            switch(temp_const -> const_type){
+            switch(temp_const -> const_type) {
                 case INT_TYPE:
                     printf("%lld\n", temp_const -> val.integer);
                     break;
@@ -628,7 +734,7 @@ void printASTNode(ASTNode* node) {
                     printf("%s\n", temp_const -> val.string);
                     break;
                 case BOOL_TYPE:
-                    printf("%s\n", temp_const -> val.boolean ? "true" : "false");
+                    printf("%s\n", temp_const -> val.boolean);
                     break;
             }
 
@@ -675,7 +781,7 @@ void printASTNode(ASTNode* node) {
         }
 
         case ARITH_ASSIGN_NODE:
-            printf("Arithmetic Assignment Node of operator %d\n", ((ASTArithAssign*)node) -> op);
+            printf("Arithmetic Assignment Node of operator %d with result type %d\n", ((ASTArithAssign*)node) -> op, ((ASTArithAssign*)node) -> data_type);
             break;
 
         case SIMPLE_NODE: {
@@ -704,7 +810,7 @@ void printASTNode(ASTNode* node) {
 
         case ARITH_NODE: {
             ASTArith* temp_arith = (ASTArith*)node;
-            printf("Arithmetic Node of operator %d\n", temp_arith -> op);
+            printf("Arithmetic Node of operator %d with result type %d\n", temp_arith -> op, temp_arith -> data_type);
             break;
         }
         
@@ -769,8 +875,12 @@ void printASTNode(ASTNode* node) {
             break;
         }
 
+        case PAREN_NODE:
+            printf("Parentheses Node\n");
+            break;
+
         default:
-            fprintf(stderr, "Error: unrecognized node type %d at line %d.\n", node -> type, yylineno);
+            fprintf(stderr, "Error: unrecognized node type %d.\n", node -> type);
             exit(1);
             break;
     }
