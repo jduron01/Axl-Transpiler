@@ -1,3 +1,5 @@
+[![Compilation Check](https://github.com/jduron01/Compiler/actions/workflows/compiler.yml/badge.svg)](https://github.com/jduron01/Compiler/actions/workflows/compiler.yml)
+
 # Compiler Description
 Implementation of a small source-to-source compiler for my language. Only compiles simple features in the language. Compiles from my language to C++.
 
