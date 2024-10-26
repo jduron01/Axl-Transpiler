@@ -1,7 +1,7 @@
 [![Compilation Check](https://github.com/jduron01/Compiler/actions/workflows/compiler.yml/badge.svg)](https://github.com/jduron01/Compiler/actions/workflows/compiler.yml)
 
-# Compiler Description
-Implementation of a small source-to-source compiler for my language. Only compiles simple features in the language. Compiles from my language to C++.
+# Axl Programming Language and Compiler
+Implementation of a small source-to-source compiler for my language called Axl. Only compiles simple features in the language. Compiles from my language to C++.
 
 # Installing Flex and Bison
 * Installing Flex: sudo apt-get install flex
